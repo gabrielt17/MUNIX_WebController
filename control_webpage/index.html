@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover" />
+  <title>MUNIX</title>
+  <style>
+    :root{
+      --bg:#000;
+      --fg:#fff;
+      --joystick-max:180px; /* limite em px */
+      --joystick-vw:30vw;   /* proporção relativa */
+      --joystick-margin:16px;
+    }
+
+    html,body{
+      height:100%;
+      margin:0;
+      background:var(--bg);
+      color:var(--fg);
+      -webkit-font-smoothing:antialiased;
+      -moz-osx-font-smoothing:grayscale;
+    }
+
+    /* container principal ocupa a viewport inteira */
+    #app{
+      position:relative;
+      width:100vw;
+      height:100vh;
+      overflow:hidden;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      background:var(--bg);
+    }
+
+    /* área do vídeo (centralizada) */
+    #video-container{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      width:100%;
+      height:100%;
+      position:relative;
+    }
+
+    /* o vídeo ocupa a resolução do cliente, mantendo proporção */
+    video#remoteVideo{
+      width:100vw;
+      height:100vh;
+      max-width:100%;
+      max-height:100%;
+      object-fit:contain;      /* mantém aspect ratio e centraliza conteúdo */
+      background:#000;
+      display:block;
+    }
+
+    /* botão de conectar no topo esquerdo (respeita safe-area) */
+    #connectBtn{
+      position:fixed;
+      top: calc(env(safe-area-inset-top, 0px) + 12px);
+      left: calc(env(safe-area-inset-left, 0px) + 12px);
+      z-index: 60;
+      padding:10px 14px;
+      border-radius:8px;
+      border: none;
+      background: rgba(255,255,255,0.06);
+      color:var(--fg);
+      backdrop-filter: blur(6px);
+      cursor:pointer;
+      font-weight:600;
+    }
+
+    /* joystick fixado no canto inferior-esquerdo, responsivo */
+    #joystick{
+      position:fixed;
+      right: calc(env(safe-area-inset-left, 0px) + var(--joystick-margin));
+      bottom: calc(env(safe-area-inset-bottom, 0px) + var(--joystick-margin));
+      z-index: 70;
+      width: min(var(--joystick-vw), var(--joystick-max));
+      height: min(var(--joystick-vw), var(--joystick-max));
+      touch-action: none; /* evita scroll ao usar joystick */
+      pointer-events: auto;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+
+    /* acessibilidade: esconder o joystick se tela for muito pequena? (opcional)
+       @media (max-width:320px){ #joystick{ display:none } } */
+
+    /* mensagens e debug (opcional) */
+    #status {
+      position:fixed;
+      right:12px;
+      top: calc(env(safe-area-inset-top,0px) + 12px);
+      z-index:50;
+      color: #ccc;
+      font-size:13px;
+      background: rgba(0,0,0,0.35);
+      padding:8px 10px;
+      border-radius:6px;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="video-container">
+      <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+
+    <button id="connectBtn">Conectar</button>
+
+    <!-- joystick fixo -->
+    <div id="joystick" aria-hidden="false" role="application"></div>
+
+    <div id="status" aria-live="polite" style="display:none"></div>
+  </div>
+
+  <!-- nipple.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/nipplejs@0.9.0/dist/nipplejs.min.js"></script>
+  <script src="main.js"></script>
+  <script src="joystick.js"></script>
+</body>
+</html>
