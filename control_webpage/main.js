@@ -42,45 +42,47 @@ document.getElementById('connectBtn').onclick = async () => {
 
     // Video track
     pc.ontrack = (evt) => {
+        console.log("Track de vídeo recebida do GStreamer");
         const video = document.getElementById('remoteVideo');
-        video.srcObject = evt.streams[0];
-    }
+        if (!video.srcObject) {
+            video.srcObject = new MediaStream([evt.track]);
+        } else {
+            video.srcObject.addTrack(evt.track);
+        }
+    };
 
-    // SDP offer
+    // Creates ICE Candidates
+    pc.onicecandidate = (event) => {
+        if (!event.candidate) return;
+
+        const cand = event.candidate.candidate;
+        console.log("ICE gerado:", cand);
+
+        // if (cand.includes(".local")) {
+        //     console.log("Ignorando candidate mDNS:", cand);
+        //     return;
+        // }
+
+        ws.send(JSON.stringify({
+            id: destiny,
+            type: "ice-candidate",
+            candidate: {
+                candidate: event.candidate.candidate,
+                sdpMLineIndex: event.candidate.sdpMLineIndex
+            }
+        }));
+    };
+
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
 
+    
     console.log("Offer SDP:\n", offer.sdp);
-    // Send offer to TV Box server via websocket
     ws.send(JSON.stringify({
         id: destiny,
         type: 'offer', 
         sdp: offer.sdp
     }));
-
-    // Creates ICE Candidates
-    pc.onicecandidate = (event) => {
-    if (!event.candidate) return;
-
-    const cand = event.candidate.candidate;
-
-    console.log("ICE gerado:", cand);
-
-    // Ignora candidatos mDNS (.local)
-    if (cand.includes(".local")) {
-        console.log("Ignorando candidate mDNS:", cand);
-        return;
-    }
-
-    ws.send(JSON.stringify({
-        id: destiny,
-        type: "ice-candidate",
-        candidate: {
-            candidate: event.candidate.candidate,
-            sdpMLineIndex: event.candidate.sdpMLineIndex
-        }
-    }));
-};
 }
 
 // Adds SDP answers and ICE Candidates received from the TV Box server

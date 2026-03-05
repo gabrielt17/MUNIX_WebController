@@ -7,6 +7,7 @@ import websockets
 import gi
 import os
 import socket
+import re
 
 
 gi.require_version("Gst", "1.0")
@@ -41,35 +42,30 @@ class WebRTCCam:
 
     # ---------------- PIPELINE ----------------
     def create_pipeline(self):
+        
         pipeline_desc = (
             f"v4l2src device={VIDEO_DEVICE} do-timestamp=true ! "
             "image/jpeg,width=640,height=480,framerate=30/1 ! "
-            "jpegdec ! "
-            "videoconvert ! "
-            "queue leaky=downstream max-size-buffers=30 ! "
+            "jpegdec ! videoconvert ! queue leaky=downstream max-size-buffers=30 ! "
             "vp8enc deadline=1 cpu-used=8 keyframe-max-dist=30 ! "
-            "rtpvp8pay pt=120 picture-id-mode=1 ! "
-            "application/x-rtp,media=video,encoding-name=VP8,payload=120 ! "
-            "queue ! "
-            "webrtcbin name=webrtc"
+            "rtpvp8pay name=payloader pt=96 picture-id-mode=2 ! "
+            "application/x-rtp,media=video,encoding-name=VP8,clock-rate=90000 ! "
+            "queue ! webrtcbin name=webrtc bundle-policy=max-bundle"
         )
 
-        print("Criando pipeline:", pipeline_desc)
+        print("Alocando elementos da pipeline na memória...")
         self.pipeline = Gst.parse_launch(pipeline_desc)
+        
         self.webrtc = self.pipeline.get_by_name("webrtc")
-        if not self.webrtc:
-            raise RuntimeError("Não foi possível obter elemento webrtc do pipeline")
+        self.payloader = self.pipeline.get_by_name("payloader")
+        
+        if not self.webrtc or not self.payloader:
+            raise RuntimeError("Falha ao obter webrtcbin ou payloader")
 
-        # callbacks
         self.webrtc.connect("on-ice-candidate", self.on_ice_candidate)
         self.webrtc.connect("on-data-channel", self.on_data_channel)
-
-        clock = Gst.SystemClock.obtain()
-        self.pipeline.use_clock(clock)
-        self.pipeline.set_start_time(Gst.CLOCK_TIME_NONE)
-
-        self.pipeline.set_state(Gst.State.PLAYING)
-        print("Pipeline set to PLAYING")
+        
+        print("Pipeline criada com sucesso (Estado: NULL)")
 
     # ---------------- SIGNALING ----------------
     async def connect(self):
@@ -81,6 +77,9 @@ class WebRTCCam:
             return
 
         print("Conectado ao servidor de sinalização")
+
+        # CORREÇÃO: Criar a pipeline em estado NULL na memória antes de ouvir o WebSocket
+        self.create_pipeline()
 
         # loop principal de recebimento
         try:
@@ -142,32 +141,42 @@ class WebRTCCam:
     
     async def handle_offer(self, data):
         print("Offer recebida")
-        # Cria pipeline (se já criada, ignora)
-        if not self.pipeline:
-            self.create_pipeline()
 
         sdp = data.get("sdp", "")
         if not sdp:
             print("Offer sem SDP")
             return
-
-        # parse do SDP
+        
         res, sdpmsg = GstSdp.SDPMessage.new()
         GstSdp.sdp_message_parse_buffer(bytes(sdp.encode()), sdpmsg)
 
         offer = GstWebRTC.WebRTCSessionDescription.new(
             GstWebRTC.WebRTCSDPType.OFFER, sdpmsg
         )
+        
+        match = re.search(r'a=rtpmap:(\d+)\s+VP8/90000', offer.sdp.as_text())
+        vp8_pt = int(match.group(1)) if match else 96
+        
+        print(f"Ajustando dinamicamente o Payload Type para: {vp8_pt}")
+        self.payloader.set_property("pt", vp8_pt)
 
-        # set remote
-        promise = Gst.Promise.new()
+        # CORREÇÃO: A pipeline DEVE estar rodando antes de processar o SDP
+        print("Iniciando a câmera e a pipeline (PLAYING)...")
+        clock = Gst.SystemClock.obtain()
+        self.pipeline.use_clock(clock)
+        self.pipeline.set_start_time(Gst.CLOCK_TIME_NONE)
+        self.pipeline.set_state(Gst.State.PLAYING)
+
+        # CORREÇÃO: Callback para garantir que create-answer só rode APÓS o set-remote terminar
+        def on_remote_set(promise, _):
+            promise.wait()
+            print("Remote description aplicada com sucesso. Gerando answer...")
+            reply_promise = Gst.Promise.new_with_change_func(self.on_answer_created, None)
+            self.webrtc.emit("create-answer", None, reply_promise)
+
+        # Emite a oferta remota e aguarda o callback acima
+        promise = Gst.Promise.new_with_change_func(on_remote_set, None)
         self.webrtc.emit("set-remote-description", offer, promise)
-        # aqui usamos interrupt (mantido do seu fluxo); é aceitável
-        promise.interrupt()
-
-        # create-answer
-        promise = Gst.Promise.new_with_change_func(self.on_answer_created, None)
-        self.webrtc.emit("create-answer", None, promise)
 
     def on_answer_created(self, promise, _):
         try:
@@ -236,10 +245,10 @@ class WebRTCCam:
 
             print("Candidate recebido:", cand_str)
 
-            # Ignora candidates mDNS (.local)
-            if ".local" in cand_str:
-                print("Ignorando candidate mDNS")
-                return
+            # # Ignora candidates mDNS (.local)
+            # if ".local" in cand_str:
+            #     print("Ignorando candidate mDNS")
+            #     return
 
             # adiciona ao webrtcbin
             try:
